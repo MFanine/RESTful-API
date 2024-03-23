@@ -2,16 +2,10 @@ package main
 
 import (
 	"net/http"
-	"./controller" 
-	"./database" 
+	"controller" // import the controller package
 )
 
-func main() {
-	db := database.InitDB("storage.db")
-	database.CreateTable(db)
-
+func InitRoutes(db *sql.DB) {
 	http.HandleFunc("/login", controller.LoginHandler(db))
 	http.HandleFunc("/register", controller.RegisterHandler(db))
-
-	http.ListenAndServe(":8080", nil)
 }

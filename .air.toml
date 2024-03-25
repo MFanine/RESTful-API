@@ -1,0 +1,11 @@
+# .air.toml
+[build]
+cmd = "go build -o ./tmp/main ./cmd/main/main.go"
+bin = "tmp/main"
+full_bin = "APP_ENV=development ./tmp/main"
+
+[watch]
+includes = [
+  "cmd/**/*",
+  "pkg/**/*"
+]

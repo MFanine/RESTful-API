@@ -3,6 +3,7 @@ module series
 go 1.22.1
 
 require (
+	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/joho/godotenv v1.5.1
 	go.mongodb.org/mongo-driver v1.14.0
 	golang.org/x/crypto v0.21.0

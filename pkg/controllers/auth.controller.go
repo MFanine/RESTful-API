@@ -7,19 +7,17 @@ import (
 	"net/http"
 	"series/pkg/models"
 	"time"
-	// "os"
+	"os"
 
+	"github.com/dgrijalva/jwt-go"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"golang.org/x/crypto/bcrypt"
-	"github.com/dgrijalva/jwt-go"
-	// "github.com/joho/godotenv"
+	"series/pkg/utils" 
 )
 
 
-// var jwtKey = []byte(os.Getenv("SECRET_KEY")) 
-
-var jwtKey = []byte("SECRET_KEY") 
+var jwtKey = []byte(os.Getenv("SECRET_KEY"))
 
 func Register(client *mongo.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -55,10 +53,18 @@ func Register(client *mongo.Client) http.HandlerFunc {
 			return
 		}
 
+		// Send confirmation email
+		err = utils.SendMail(newUser.Email, "Registration Successful", "Welcome to our application! Please confirm your email address by clicking on the following link: ...")
+		if err != nil {
+			log.Println("Error sending confirmation email:", err)
+			// Decide how to handle this error based on your application's requirements
+		}
+
 		w.WriteHeader(http.StatusCreated)
 	}
 }
 
+// Logiin ////////////////
 func Login(client *mongo.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		defer r.Body.Close()
@@ -110,3 +116,48 @@ func Login(client *mongo.Client) http.HandlerFunc {
 		w.WriteHeader(http.StatusOK)
 	}
 }
+
+// Forget Password
+
+func ForgetPassword(client *mongo.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var user models.User
+		err := json.NewDecoder(r.Body).Decode(&user)
+		if err != nil {
+			log.Println("Error decoding user data:", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		collection := client.Database("test").Collection("users")
+		var foundUser models.User
+		err = collection.FindOne(context.Background(), bson.M{"username": user.Username}).Decode(&foundUser)
+		if err != nil {
+			log.Println("User not found:", err)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+
+		// Generate a new password
+		newPassword := "newPassword" // This should be a randomly generated password
+
+		hashedPass, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+		if err != nil {
+			log.Println("Error hashing password:", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		foundUser.Password = string(hashedPass)
+
+		// Update the user's password in the database
+		_, err = collection.UpdateOne(context.Background(), bson.M{"username": user.Username}, bson.M{"$set": bson.M{"password": foundUser.Password}})
+		if err != nil {
+			log.Println("Error updating password in database:", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+	}
+}
+

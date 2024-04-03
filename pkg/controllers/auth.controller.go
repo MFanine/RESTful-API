@@ -5,21 +5,24 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"series/pkg/models"
-	"time"
-	"os"
 
-	"github.com/dgrijalva/jwt-go"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
+	// "go.mongodb.org/mongo-driver/mongo/options"
 	"golang.org/x/crypto/bcrypt"
-	"series/pkg/utils" 
+
+	// "series/pkg/mail"
+	"series/pkg/models"
+	"series/pkg/utils"
 )
 
+// EmailSender interface for sending emails
+type EmailSender interface {
+	SendEmail(subject string, content string, to []string, cc []string, bcc []string, attachFiles []string) error
+}
 
-var jwtKey = []byte(os.Getenv("SECRET_KEY"))
-
-func Register(client *mongo.Client) http.HandlerFunc {
+// Register handles user registration
+func Register(client *mongo.Client, emailSender EmailSender) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var newUser models.User
 		err := json.NewDecoder(r.Body).Decode(&newUser)
@@ -53,111 +56,113 @@ func Register(client *mongo.Client) http.HandlerFunc {
 			return
 		}
 
-		// Send confirmation email
-		err = utils.SendMail(newUser.Email, "Registration Successful", "Welcome to our application! Please confirm your email address by clicking on the following link: ...")
+		generatedToken, _ := utils.GenerateVerificationToken()
+
+		_, err = collection.UpdateOne(context.Background(), bson.M{"_id": newUser.ID}, bson.M{"$set": bson.M{"verificationToken": generatedToken}})
 		if err != nil {
-			log.Println("Error sending confirmation email:", err)
-			// Decide how to handle this error based on your application's requirements
+			log.Println("Error saving verification token:", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		// Send verification email
+		subject := "Welcome to Our Platform! Please Verify Your Email"
+		content := "Hi " + newUser.Username + ",\n\n" +
+			"Thank you for registering with us!\n\n" +
+			"Please click the following link to verify your email address:\n" +
+			"http://yourdomain.com/verify?token=" + generatedToken + "\n\n" +
+			"Regards,\n" +
+			"Your Platform Team"
+
+		err = emailSender.SendEmail(subject, content, []string{newUser.Email}, nil, nil, nil)
+		if err != nil {
+			log.Println("Error sending verification email:", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
 		}
 
 		w.WriteHeader(http.StatusCreated)
 	}
 }
 
-// Logiin ////////////////
-func Login(client *mongo.Client) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		defer r.Body.Close()
+// func VerifyEmail(client *mongo.Client) http.HandlerFunc {
+// 	return func(w http.ResponseWriter, r *http.Request) {
+// 		token := r.URL.Query().Get("token")
+// 		if token == "" {
+// 			log.Println("No token provided")
+// 			w.WriteHeader(http.StatusBadRequest)
+// 			return
+// 		}
 
-		var user models.User
-		err := json.NewDecoder(r.Body).Decode(&user)
-		if err != nil {
-			log.Println("Error decoding user data:", err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
+// 		collection := client.Database("test").Collection("users")
+// 		var user models.User
+// 		err := collection.FindOneAndUpdate(context.Background(), bson.M{"verificationToken": token}, bson.M{"$set": bson.M{"emailVerified": true}}).Decode(&user)
+// 		if err != nil {
+// 			log.Println("Invalid token:", err)
+// 			w.WriteHeader(http.StatusBadRequest)
+// 			return
+// 		}
 
-		collection := client.Database("test").Collection("users")
-		var foundUser models.User
-		err = collection.FindOne(context.Background(), bson.M{"username": user.Username}).Decode(&foundUser)
-		if err != nil {
-			log.Println("User not found:", err)
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
+// 		http.Redirect(w, r, "/login", http.StatusSeeOther)
+// 	}
+// }
 
-		err = bcrypt.CompareHashAndPassword([]byte(foundUser.Password), []byte(user.Password))
-		if err != nil {
-			log.Println("Invalid password:", err)
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
+//// / login
+// func Login(client *mongo.Client) http.HandlerFunc {
+// 	return func(w http.ResponseWriter, r *http.Request) {
+// 		defer r.Body.Close()
 
-		expirationTime := time.Now().Add(24 * time.Hour)
-		claims := &jwt.StandardClaims{
-			Subject:   foundUser.Username,
-			ExpiresAt: expirationTime.Unix(),
-		}
+// 		w.WriteHeader(http.StatusCreated)
+// 		w.Write([]byte("Logged in successfully"))
+// 	}
+// }
+// /// logout
+// func Logout() http.HandlerFunc {
+// 	return func(w http.ResponseWriter, r *http.Request) {
+// 		w.WriteHeader(http.StatusOK)
+// 		w.Write([]byte("Logged out successfully"))
+// 	}
+// }
+// // Forget Password
 
-		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-		tokenString, err := token.SignedString(jwtKey)
-		if err != nil {
-			log.Println("Error generating token:", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
+// func ForgetPassword(client *mongo.Client) http.HandlerFunc {
+// 	return func(w http.ResponseWriter, r *http.Request) {
+// 		var user models.User
+// 		err := json.NewDecoder(r.Body).Decode(&user)
+// 		if err != nil {
+// 			log.Println("Error decoding user data:", err)
+// 			w.WriteHeader(http.StatusBadRequest)
+// 			return
+// 		}
 
-		http.SetCookie(w, &http.Cookie{
-			Name:    "token",
-			Value:   tokenString,
-			Expires: expirationTime,
-		})
+// 		collection := client.Database("test").Collection("users")
+// 		var foundUser models.User
+// 		err = collection.FindOne(context.Background(), bson.M{"username": user.Username}).Decode(&foundUser)
+// 		if err != nil {
+// 			log.Println("User not found:", err)
+// 			w.WriteHeader(http.StatusNotFound)
+// 			return
+// 		}
 
-		w.WriteHeader(http.StatusOK)
-	}
-}
+// 		// Generate a new password
+// 		newPassword := "newPassword" // This should be a randomly generated password
 
-// Forget Password
+// 		hashedPass, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+// 		if err != nil {
+// 			log.Println("Error hashing password:", err)
+// 			w.WriteHeader(http.StatusInternalServerError)
+// 			return
+// 		}
+// 		foundUser.Password = string(hashedPass)
 
-func ForgetPassword(client *mongo.Client) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var user models.User
-		err := json.NewDecoder(r.Body).Decode(&user)
-		if err != nil {
-			log.Println("Error decoding user data:", err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
+// 		// Update the user's password in the database
+// 		_, err = collection.UpdateOne(context.Background(), bson.M{"username": user.Username}, bson.M{"$set": bson.M{"password": foundUser.Password}})
+// 		if err != nil {
+// 			log.Println("Error updating password in database:", err)
+// 			w.WriteHeader(http.StatusInternalServerError)
+// 			return
+// 		}
 
-		collection := client.Database("test").Collection("users")
-		var foundUser models.User
-		err = collection.FindOne(context.Background(), bson.M{"username": user.Username}).Decode(&foundUser)
-		if err != nil {
-			log.Println("User not found:", err)
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-
-		// Generate a new password
-		newPassword := "newPassword" // This should be a randomly generated password
-
-		hashedPass, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
-		if err != nil {
-			log.Println("Error hashing password:", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		foundUser.Password = string(hashedPass)
-
-		// Update the user's password in the database
-		_, err = collection.UpdateOne(context.Background(), bson.M{"username": user.Username}, bson.M{"$set": bson.M{"password": foundUser.Password}})
-		if err != nil {
-			log.Println("Error updating password in database:", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-
-		w.WriteHeader(http.StatusOK)
-	}
-}
-
+// 		w.WriteHeader(http.StatusOK)
+// 	}
+// }

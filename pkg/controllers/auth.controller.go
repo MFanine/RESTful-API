@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"series/pkg/models"
+	"series/pkg/utils"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -46,14 +47,61 @@ func Register(client *mongo.Client) http.HandlerFunc {
 			return
 		}
 
+		generatedToken, _ := utils.GenerateVerificationToken()
+
+		_, err = collection.UpdateOne(context.Background(), bson.M{"_id": newUser.ID}, bson.M{"$set": bson.M{"verificationToken": generatedToken}})
+		if err != nil {
+			log.Println("Error saving verification token:", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		err = utils.SendEmail(newUser.Email, generatedToken)
+		if err != nil {
+			log.Println("Error sending verification email:", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
 		w.WriteHeader(http.StatusCreated)
 	}
 }
+
+func VerifyEmail(client *mongo.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := r.URL.Query().Get("token")
+		if token == "" {
+			log.Println("No token provided")
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		collection := client.Database("test").Collection("users")
+		var user models.User
+		err := collection.FindOneAndUpdate(context.Background(), bson.M{"verificationToken": token}, bson.M{"$set": bson.M{"emailVerified": true}}).Decode(&user)
+		if err != nil {
+			log.Println("Invalid token:", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+	}
+}
+
 
 func Login(client *mongo.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		defer r.Body.Close()
 
 		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte("Logged in successfully"))
+	}
+}
+
+func Logout() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Logged out successfully"))
 	}
 }
